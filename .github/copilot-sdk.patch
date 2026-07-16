@@ -1,0 +1,307 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 234a3af..0000000 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -58,6 +58,7 @@ dotenvy = "0.15"
+ futures = "0.3"
+ futures-util = "0.3"
+ filetime = "0.2"
++github-copilot-sdk = "1.0.6"
+ image = { version = "0.25", features = ["jpeg", "png", "webp"] }
+ lazy_static = "1.4"
+ once_cell = "1"
+diff --git a/crates/provider/Cargo.toml b/crates/provider/Cargo.toml
+index 3470e9c..0000000 100644
+--- a/crates/provider/Cargo.toml
++++ b/crates/provider/Cargo.toml
+@@ -65,6 +65,7 @@ required-features = ["live-tests"]
+ 
+ [dependencies]
++async-trait.workspace = true
+ tokio.workspace = true
+ serde.workspace = true
+ serde_json.workspace = true
+@@ -76,6 +77,7 @@ uuid.workspace = true
+ reqwest.workspace = true
+ futures-util.workspace = true
+ regex.workspace = true
++github-copilot-sdk.workspace = true
+ tura_path.workspace = true
+ 
+ [dev-dependencies]
+diff --git a/crates/provider/src/lib.rs b/crates/provider/src/lib.rs
+index 99d2dde..0000000 100644
+--- a/crates/provider/src/lib.rs
++++ b/crates/provider/src/lib.rs
+@@ -5,6 +5,7 @@
+ 
+ pub mod auth_registry;
+ pub mod content_type_fallback;
++mod github_copilot_catalog;
+ pub mod llm;
+ pub mod logging;
+ pub mod metrics;
+diff --git a/crates/provider/src/tura_llm_conf.rs b/crates/provider/src/tura_llm_conf.rs
+index e90fcf5..0000000 100644
+--- a/crates/provider/src/tura_llm_conf.rs
++++ b/crates/provider/src/tura_llm_conf.rs
+@@ -21,7 +21,8 @@ fn config_path() -> PathBuf {
+ pub async fn load_settings() -> Result<Settings, TuraError> {
+     let path = config_path();
+     let content = fs::read_to_string(&path).await.map_err(TuraError::io)?;
+-    let cfg: RootConfig = serde_json::from_str(&content)?;
++    let mut cfg: RootConfig = serde_json::from_str(&content)?;
++    crate::github_copilot_catalog::apply(&mut cfg);
+     crate::tura_llm::set_provider_latency_timeouts(cfg.provider_latency.selected_timeouts());
+     crate::tura_llm::set_provider_latency_config(cfg.provider_latency.clone());
+ 
+@@ -81,6 +82,15 @@ mod tests {
+         assert!(settings
+             .configured_model_catalog()
+             .contains_key("openrouter"));
++        assert_eq!(
++            settings.provider_base_url("github-copilot").as_deref(),
++            Some("sdk://github-copilot")
++        );
++        assert!(settings
++            .configured_model_catalog()
++            .get("github-copilot")
++            .is_some_and(|models| models.iter().any(|model| model == "auto")));
+ 
+         match previous_provider {
+             Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),
+diff --git a/crates/provider/src/llm/openapi/mod.rs b/crates/provider/src/llm/openapi/mod.rs
+index 81e671b..0000000 100644
+--- a/crates/provider/src/llm/openapi/mod.rs
++++ b/crates/provider/src/llm/openapi/mod.rs
+@@ -20,7 +20,51 @@ mod response;
+ 
+ pub(crate) use chat::force_search;
+-pub use chat::{call, call_with_stream_events, embed, embed_for_provider};
++pub use chat::{embed, embed_for_provider};
++
++pub async fn call(
++    base_url: &str,
++    model: &str,
++    provider: &str,
++    api_key: &str,
++    messages: &[serde_json::Value],
++    options: &crate::tura_llm::CallOptions,
++) -> Result<crate::tura_llm::ProviderResponse, crate::tura_llm::TuraError> {
++    call_with_stream_events(
++        base_url,
++        model,
++        provider,
++        api_key,
++        messages,
++        options,
++        None,
++    )
++    .await
++}
++
++pub async fn call_with_stream_events(
++    base_url: &str,
++    model: &str,
++    provider: &str,
++    api_key: &str,
++    messages: &[serde_json::Value],
++    options: &crate::tura_llm::CallOptions,
++    stream_events: Option<crate::tura_llm::ProviderStreamEventSink>,
++) -> Result<crate::tura_llm::ProviderResponse, crate::tura_llm::TuraError> {
++    if provider.eq_ignore_ascii_case("github-copilot") {
++        return crate::llm::providers::github_copilot::call_with_stream_events(
++            base_url,
++            model,
++            api_key,
++            messages,
++            options,
++            stream_events,
++        )
++        .await;
++    }
++    chat::call_with_stream_events(
++        base_url,
++        model,
++        provider,
++        api_key,
++        messages,
++        options,
++        stream_events,
++    )
++    .await
++}
+ pub(crate) use response::{
+     codex_oauth_call, normalize_codex_response_event_content, responses_api_key_call,
+ };
+diff --git a/crates/provider/src/llm/providers/mod.rs b/crates/provider/src/llm/providers/mod.rs
+index b4eb9b9..0000000 100644
+--- a/crates/provider/src/llm/providers/mod.rs
++++ b/crates/provider/src/llm/providers/mod.rs
+@@ -4,6 +4,7 @@ pub mod chatgpt;
+ pub mod claude_code;
+ pub mod codex;
+ pub mod google;
++pub mod github_copilot;
+ pub mod minimax;
+ pub mod openai;
+ pub mod qwen;
+@@ -17,6 +18,7 @@ pub(crate) enum ProviderApiStyle {
+     Google,
+     Bedrock,
+     AnthropicMessages,
++    CopilotSdk,
+ }
+ 
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+@@ -33,6 +35,25 @@ pub(crate) struct ProviderParameterPolicy {
+ 
+ pub(crate) fn parameter_policy(provider: &str) -> ProviderParameterPolicy {
+     match provider.to_ascii_lowercase().as_str() {
++        "github-copilot" => ProviderParameterPolicy {
++            api_style: ProviderApiStyle::CopilotSdk,
++            metrics_style: ProviderApiStyle::CopilotSdk,
++            supports_forced_tool_choice: false,
++            supports_stream_usage: false,
++            supports_reasoning_effort: true,
++            supports_service_tier: false,
++            supports_prompt_cache_key: false,
++            ignored_parameters: &[
++                "stream_options",
++                "service_tier",
++                "prompt_cache_key",
++                "temperature",
++                "top_p",
++                "parallel_tool_calls",
++            ],
++        },
+         "codex" => ProviderParameterPolicy {
+             api_style: ProviderApiStyle::CodexResponses,
+             metrics_style: ProviderApiStyle::OpenApi,
+@@ -146,6 +167,7 @@ mod tests {
+     fn all_configured_provider_families_have_parameter_policies() {
+         let providers = [
+             "codex",
++            "github-copilot",
+             "openai",
+             "google",
+             "bedrock",
+@@ -184,6 +206,17 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn github_copilot_uses_the_sdk_policy_not_openai_compatibility() {
++        let policy = parameter_policy("github-copilot");
++        assert_eq!(policy.api_style, ProviderApiStyle::CopilotSdk);
++        assert_eq!(policy.metrics_style, ProviderApiStyle::CopilotSdk);
++        assert!(!policy.supports_stream_usage);
++        assert!(!policy.supports_prompt_cache_key);
++        assert!(policy.ignored_parameters.contains(&"temperature"));
++    }
++
+     #[test]
+     fn codex_uses_responses_api_but_openapi_usage_shape() {
+         let policy = parameter_policy("codex");
+diff --git a/crates/provider/src/auth_registry.rs b/crates/provider/src/auth_registry.rs
+index a7172f2..0000000 100644
+--- a/crates/provider/src/auth_registry.rs
++++ b/crates/provider/src/auth_registry.rs
+@@ -142,10 +142,13 @@ const AWS_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
+     AuthMethodKind::AwsCredentials,
+     "AWS Credentials",
+ )];
+-const GITHUB_COPILOT_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
+-    AuthMethodKind::DeviceCode,
+-    "GitHub Copilot OAuth",
+-)];
++const GITHUB_COPILOT_METHODS: &[AuthMethodDescriptor] = &[
++    AuthMethodDescriptor::new(AuthMethodKind::LocalCliToken, "Copilot CLI or gh login"),
++    AuthMethodDescriptor::new(AuthMethodKind::ApiKey, "GitHub token"),
++];
++const GITHUB_COPILOT_MODELS: &[&str] = &["auto"];
+ 
+ const OPENAI_MODELS: &[&str] = &[
+     "gpt-5.6-sol",
+@@ -557,21 +560,21 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
+         runtime_provider_id: "github-copilot",
+         display_name: "GitHub Copilot",
+         base_url_config_key: "github-copilot",
+-        default_base_url: "https://api.githubcopilot.com",
+-        supported_models: EMPTY_MODELS,
++        default_base_url: "sdk://github-copilot",
++        supported_models: GITHUB_COPILOT_MODELS,
+         auth_methods: GITHUB_COPILOT_METHODS,
+         token_env: Some("COPILOT_GITHUB_TOKEN"),
+         login_env: Some("COPILOT_LOGIN"),
+         refresh_env: None,
+-        expires_env: Some("COPILOT_GITHUB_TOKEN_EXPIRES"),
++        expires_env: None,
+         account_env: Some("COPILOT_GITHUB_ACCOUNT"),
+-        endpoint_env: Some("COPILOT_API_URL"),
++        endpoint_env: Some("COPILOT_CLI_PATH"),
+         local_auth_discovery: Some("copilot_cli_credentials"),
+-        oauth_authorize_kind: Some(OAuthAuthorizeKind::GithubDevice),
+-        oauth_callback_kind: Some(OAuthAuthorizeKind::GithubDevice),
++        oauth_authorize_kind: None,
++        oauth_callback_kind: None,
+         capabilities: ProviderCapabilityFlags {
+             supports_subscription: true,
+             supports_api_key: true,
+             supports_oauth_refresh: false,
+-            supports_model_validation: true,
++            supports_model_validation: false,
+             ..openai_compatible_api_capabilities()
+         },
+         disabled_reason: None,
+diff --git a/docs/start/providers.md b/docs/start/providers.md
+index 59fe7bc..0000000 100644
+--- a/docs/start/providers.md
++++ b/docs/start/providers.md
+@@ -40,6 +40,7 @@ Common LLM credential names are:
+ | OpenAI API         | `openai`      | API key                                       | `OPENAI_API_KEY`                                                             |
+ | Anthropic API      | `anthropic`   | API key                                       | `ANTHROPIC_API_KEY`                                                          |
+ | Claude Code        | `claude-code` | OAuth login or supported local auth discovery | `CLAUDE_CODE_OAUTH_TOKEN`                                                    |
++| GitHub Copilot     | `github-copilot` | Copilot CLI/gh login or GitHub token        | `COPILOT_GITHUB_TOKEN` (optional with an existing login)                      |
+ | Google API         | `google`      | API key or supported OAuth login              | `GOOGLE_API_KEY`                                                             |
+ | Gemini API         | `gemini`      | API key or supported OAuth login              | `GEMINI_API_KEY`                                                             |
+ | OpenRouter         | `openrouter`  | API key                                       | `OPENROUTER_API_KEY`                                                         |
+@@ -136,6 +137,35 @@ For a provider with supported OAuth, use its login flow instead of `set-auth`:
+ tura provider status codex
+ ```
+ 
++### GitHub Copilot SDK setup
++
++The `github-copilot` provider uses the official GitHub Copilot SDK rather than
++the OpenAI-compatible HTTP adapter. The SDK manages a compatible Copilot CLI
++process and can use an existing Copilot CLI or GitHub CLI login. Authenticate
++outside Tura when necessary:
++
++```bash
++copilot login
++# or
++gh auth login
++```
++
++Alternatively, set `COPILOT_GITHUB_TOKEN` through the provider settings or the
++environment. The SDK also understands `GH_TOKEN` and `GITHUB_TOKEN`; the
++provider-specific variable takes precedence. `COPILOT_CLI_PATH` can point to an
++explicit Copilot CLI binary, otherwise the SDK resolves its bundled CLI.
++
++Select `github-copilot/auto` to let Copilot choose the account's default model,
++or use an explicit model id supported by the connected account:
++
++```bash
++tura provider status github-copilot
++tura config set model=github-copilot/auto
++tura exec -m github-copilot/auto "Reply with OK and identify the active model"
++```
++
++Tura starts the SDK in its empty/safe mode, disables ambient configuration and
++host operations, and exposes only Tura's canonical tools. Copilot supplies the
++model turn; Tura remains responsible for orchestration, permissions, command
++execution, and tool results.
++
+ Next list model choices and select one. Replace `MODEL_ID` with an id printed by
+ the preceding command:
+ 
