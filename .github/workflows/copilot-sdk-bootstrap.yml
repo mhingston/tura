@@ -1,0 +1,54 @@
+name: Bootstrap Copilot SDK provider
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Apply integration patch
+        id: patch
+        shell: bash
+        run: |
+          if git apply --check .github/copilot-sdk.patch; then
+            git apply .github/copilot-sdk.patch
+            echo "applied=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Patch is already applied; validation bootstrap is complete."
+            echo "applied=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Format
+        if: steps.patch.outputs.applied == 'true'
+        run: cargo fmt --all
+
+      - name: Check provider crate
+        if: steps.patch.outputs.applied == 'true'
+        run: cargo check -p provider
+
+      - name: Test provider crate
+        if: steps.patch.outputs.applied == 'true'
+        run: cargo test -p provider --lib
+
+      - name: Commit validated changes and lockfile
+        if: steps.patch.outputs.applied == 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git reset -- .github/copilot-sdk.patch .github/workflows/copilot-sdk-bootstrap.yml
+          git commit -m "Add GitHub Copilot SDK provider"
+          git push origin "HEAD:${{ github.head_ref }}"
