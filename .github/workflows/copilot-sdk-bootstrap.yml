@@ -17,6 +17,7 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
+          show-progress: false
 
       - name: Apply integration patch
         shell: bash
@@ -51,7 +52,16 @@ jobs:
               )
           path.write_text('\n'.join(output) + '\n')
           PY
-          git apply --check --verbose .github/copilot-sdk.patch
+          if ! error=$(git apply --check --verbose .github/copilot-sdk.patch 2>&1); then
+            printf '%s\n' "$error" > .github/copilot-sdk-patch-error.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/copilot-sdk-patch-error.txt
+            git commit -m "Record Copilot patch preflight failure" || true
+            git push origin "HEAD:${{ github.head_ref }}"
+            exit 1
+          fi
+          rm -f .github/copilot-sdk-patch-error.txt
           git apply .github/copilot-sdk.patch
 
       - name: Format
