@@ -22,28 +22,20 @@ jobs:
         id: patch
         shell: bash
         run: |
-          if git apply --check .github/copilot-sdk.patch; then
-            git apply .github/copilot-sdk.patch
-            echo "applied=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Patch is already applied; validation bootstrap is complete."
-            echo "applied=false" >> "$GITHUB_OUTPUT"
-          fi
+          git apply --check --verbose .github/copilot-sdk.patch
+          git apply .github/copilot-sdk.patch
+          echo "applied=true" >> "$GITHUB_OUTPUT"
 
       - name: Format
-        if: steps.patch.outputs.applied == 'true'
         run: cargo fmt --all
 
       - name: Check provider crate
-        if: steps.patch.outputs.applied == 'true'
         run: cargo check -p provider
 
       - name: Test provider crate
-        if: steps.patch.outputs.applied == 'true'
         run: cargo test -p provider --lib
 
       - name: Commit validated changes and lockfile
-        if: steps.patch.outputs.applied == 'true'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
