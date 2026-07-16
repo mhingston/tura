@@ -42,7 +42,10 @@ struct CaptureToolHandler {
 
 #[async_trait]
 impl ToolHandler for CaptureToolHandler {
-    async fn call(&self, invocation: ToolInvocation) -> Result<ToolResult, github_copilot_sdk::Error> {
+    async fn call(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<ToolResult, github_copilot_sdk::Error> {
         let call = CapturedToolCall {
             id: Uuid::new_v4().simple().to_string(),
             name: self.name.clone(),
@@ -266,7 +269,8 @@ fn system_message(messages: &[Value], tools: Option<&[Value]>) -> String {
             .to_string(),
     );
     if tools.unwrap_or_default().is_empty() {
-        system_parts.push("No tools are available in this turn; answer with text only.".to_string());
+        system_parts
+            .push("No tools are available in this turn; answer with text only.".to_string());
     }
     system_parts.join("\n\n")
 }
@@ -385,11 +389,8 @@ mod tests {
                 "parameters": {"type": "object", "properties": {}}
             }
         })];
-        let (tools, available) = sdk_tools(
-            Some(&configured),
-            Arc::new(Mutex::new(Vec::new())),
-        )
-        .expect("tools");
+        let (tools, available) =
+            sdk_tools(Some(&configured), Arc::new(Mutex::new(Vec::new()))).expect("tools");
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "command_run");

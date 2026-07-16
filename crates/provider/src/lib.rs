@@ -3,6 +3,7 @@
 
 pub mod auth_registry;
 pub mod content_type_fallback;
+mod github_copilot_catalog;
 pub mod llm;
 pub mod logging;
 pub mod metrics;

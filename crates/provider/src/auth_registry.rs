@@ -140,10 +140,11 @@ const AWS_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
     AuthMethodKind::AwsCredentials,
     "AWS Credentials",
 )];
-const GITHUB_COPILOT_METHODS: &[AuthMethodDescriptor] = &[AuthMethodDescriptor::new(
-    AuthMethodKind::DeviceCode,
-    "GitHub Copilot OAuth",
-)];
+const GITHUB_COPILOT_METHODS: &[AuthMethodDescriptor] = &[
+    AuthMethodDescriptor::new(AuthMethodKind::LocalCliToken, "Copilot CLI or gh login"),
+    AuthMethodDescriptor::new(AuthMethodKind::ApiKey, "GitHub token"),
+];
+const GITHUB_COPILOT_MODELS: &[&str] = &["auto"];
 
 const OPENAI_MODELS: &[&str] = &[
     "gpt-5.6-sol",
@@ -559,23 +560,23 @@ pub const PROVIDER_AUTH_REGISTRY: &[ProviderAuthRegistryEntry] = &[
         runtime_provider_id: "github-copilot",
         display_name: "GitHub Copilot",
         base_url_config_key: "github-copilot",
-        default_base_url: "https://api.githubcopilot.com",
-        supported_models: EMPTY_MODELS,
+        default_base_url: "sdk://github-copilot",
+        supported_models: GITHUB_COPILOT_MODELS,
         auth_methods: GITHUB_COPILOT_METHODS,
         token_env: Some("COPILOT_GITHUB_TOKEN"),
         login_env: Some("COPILOT_LOGIN"),
         refresh_env: None,
-        expires_env: Some("COPILOT_GITHUB_TOKEN_EXPIRES"),
+        expires_env: None,
         account_env: Some("COPILOT_GITHUB_ACCOUNT"),
-        endpoint_env: Some("COPILOT_API_URL"),
+        endpoint_env: Some("COPILOT_CLI_PATH"),
         local_auth_discovery: Some("copilot_cli_credentials"),
-        oauth_authorize_kind: Some(OAuthAuthorizeKind::GithubDevice),
-        oauth_callback_kind: Some(OAuthAuthorizeKind::GithubDevice),
+        oauth_authorize_kind: None,
+        oauth_callback_kind: None,
         capabilities: ProviderCapabilityFlags {
             supports_subscription: true,
             supports_api_key: true,
             supports_oauth_refresh: false,
-            supports_model_validation: true,
+            supports_model_validation: false,
             ..openai_compatible_api_capabilities()
         },
         disabled_reason: None,

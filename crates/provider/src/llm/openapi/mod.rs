@@ -18,7 +18,50 @@ mod common;
 mod response;
 
 pub(crate) use chat::force_search;
-pub use chat::{call, call_with_stream_events, embed, embed_for_provider};
+pub use chat::{embed, embed_for_provider};
+
+pub async fn call(
+    base_url: &str,
+    model: &str,
+    provider: &str,
+    api_key: &str,
+    messages: &[serde_json::Value],
+    options: &crate::tura_llm::CallOptions,
+) -> Result<crate::tura_llm::ProviderResponse, crate::tura_llm::TuraError> {
+    call_with_stream_events(base_url, model, provider, api_key, messages, options, None).await
+}
+
+pub async fn call_with_stream_events(
+    base_url: &str,
+    model: &str,
+    provider: &str,
+    api_key: &str,
+    messages: &[serde_json::Value],
+    options: &crate::tura_llm::CallOptions,
+    stream_events: Option<crate::tura_llm::ProviderStreamEventSink>,
+) -> Result<crate::tura_llm::ProviderResponse, crate::tura_llm::TuraError> {
+    if provider.eq_ignore_ascii_case("github-copilot") {
+        return crate::llm::providers::github_copilot::call_with_stream_events(
+            base_url,
+            model,
+            api_key,
+            messages,
+            options,
+            stream_events,
+        )
+        .await;
+    }
+    chat::call_with_stream_events(
+        base_url,
+        model,
+        provider,
+        api_key,
+        messages,
+        options,
+        stream_events,
+    )
+    .await
+}
 pub(crate) use response::{
     codex_oauth_call, normalize_codex_response_event_content, responses_api_key_call,
 };

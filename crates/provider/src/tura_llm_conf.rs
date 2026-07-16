@@ -19,7 +19,8 @@ fn config_path() -> PathBuf {
 pub async fn load_settings() -> Result<Settings, TuraError> {
     let path = config_path();
     let content = fs::read_to_string(&path).await.map_err(TuraError::io)?;
-    let cfg: RootConfig = serde_json::from_str(&content)?;
+    let mut cfg: RootConfig = serde_json::from_str(&content)?;
+    crate::github_copilot_catalog::apply(&mut cfg);
     crate::tura_llm::set_provider_latency_timeouts(cfg.provider_latency.selected_timeouts());
     crate::tura_llm::set_provider_latency_config(cfg.provider_latency.clone());
 
@@ -79,6 +80,14 @@ mod tests {
         assert!(settings
             .configured_model_catalog()
             .contains_key("openrouter"));
+        assert_eq!(
+            settings.provider_base_url("github-copilot").as_deref(),
+            Some("sdk://github-copilot")
+        );
+        assert!(settings
+            .configured_model_catalog()
+            .get("github-copilot")
+            .is_some_and(|models| models.iter().any(|model| model == "auto")));
 
         match previous_provider {
             Some(value) => std::env::set_var("TURA_PROVIDER_CONFIG", value),

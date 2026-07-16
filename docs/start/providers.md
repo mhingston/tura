@@ -38,6 +38,7 @@ Common LLM credential names are:
 | OpenAI API         | `openai`      | API key                                       | `OPENAI_API_KEY`                                                             |
 | Anthropic API      | `anthropic`   | API key                                       | `ANTHROPIC_API_KEY`                                                          |
 | Claude Code        | `claude-code` | OAuth login or supported local auth discovery | `CLAUDE_CODE_OAUTH_TOKEN`                                                    |
+| GitHub Copilot     | `github-copilot` | Copilot CLI/gh login or GitHub token        | `COPILOT_GITHUB_TOKEN` (optional with an existing login)                      |
 | Google API         | `google`      | API key or supported OAuth login              | `GOOGLE_API_KEY`                                                             |
 | Gemini API         | `gemini`      | API key or supported OAuth login              | `GEMINI_API_KEY`                                                             |
 | OpenRouter         | `openrouter`  | API key                                       | `OPENROUTER_API_KEY`                                                         |
@@ -134,6 +135,38 @@ For a provider with supported OAuth, use its login flow instead of `set-auth`:
 tura provider login codex
 tura provider status codex
 ```
+
+### GitHub Copilot SDK setup
+
+The `github-copilot` provider uses the official GitHub Copilot SDK rather than
+the OpenAI-compatible HTTP adapter. The SDK manages a compatible Copilot CLI
+process and can use an existing Copilot CLI or GitHub CLI login. Authenticate
+outside Tura when necessary:
+
+```bash
+copilot login
+# or
+gh auth login
+```
+
+Alternatively, set `COPILOT_GITHUB_TOKEN` through the provider settings or the
+environment. The SDK also understands `GH_TOKEN` and `GITHUB_TOKEN`; the
+provider-specific variable takes precedence. `COPILOT_CLI_PATH` can point to an
+explicit Copilot CLI binary, otherwise the SDK resolves its bundled CLI.
+
+Select `github-copilot/auto` to let Copilot choose the account's default model,
+or use an explicit model id supported by the connected account:
+
+```bash
+tura provider status github-copilot
+tura config set model=github-copilot/auto
+tura exec -m github-copilot/auto "Reply with OK and identify the active model"
+```
+
+Tura starts the SDK in its empty/safe mode, disables ambient configuration and
+host operations, and exposes only Tura's canonical tools. Copilot supplies the
+model turn; Tura remains responsible for orchestration, permissions, command
+execution, and tool results.
 
 Next list model choices and select one. Replace `MODEL_ID` with an id printed by
 the preceding command:
