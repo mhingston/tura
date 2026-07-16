@@ -19,12 +19,40 @@ jobs:
           fetch-depth: 0
 
       - name: Apply integration patch
-        id: patch
         shell: bash
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('.github/copilot-sdk.patch')
+          lines = path.read_text().splitlines()
+          output = []
+          for index, line in enumerate(lines):
+              if not line.startswith('@@ '):
+                  output.append(line)
+                  continue
+              match = re.match(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)', line)
+              if match is None:
+                  raise SystemExit(f'invalid hunk header: {line}')
+              old_count = new_count = 0
+              for body in lines[index + 1:]:
+                  if body.startswith('@@ ') or body.startswith('diff --git '):
+                      break
+                  if body.startswith((' ', '-')):
+                      old_count += 1
+                  if body.startswith((' ', '+')):
+                      new_count += 1
+              def suffix(count: int) -> str:
+                  return '' if count == 1 else f',{count}'
+              output.append(
+                  f'@@ -{match.group(1)}{suffix(old_count)} '
+                  f'+{match.group(2)}{suffix(new_count)} @@{match.group(3)}'
+              )
+          path.write_text('\n'.join(output) + '\n')
+          PY
           git apply --check --verbose .github/copilot-sdk.patch
           git apply .github/copilot-sdk.patch
-          echo "applied=true" >> "$GITHUB_OUTPUT"
 
       - name: Format
         run: cargo fmt --all
